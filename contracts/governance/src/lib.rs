@@ -38,6 +38,7 @@ pub struct GovernanceConfig {
     pub min_voting_units: i128,
     pub identity_required: bool,
     pub execution_threshold: u32,
+    pub execution_delay_ledgers: u32,
 }
 
 #[contracttype]
@@ -85,6 +86,7 @@ pub enum DataKey {
     Receipt(u32, Address),
     ExecutionAdmins,
     ExecutionThreshold,
+    ExecutionDelayLedgers,
 }
 
 fn sqrt(x: i128) -> i128 {
@@ -174,12 +176,18 @@ fn get_config(env: &Env) -> Result<GovernanceConfig, Error> {
         .instance()
         .get(&DataKey::ExecutionThreshold)
         .unwrap_or(1u32);
+    let execution_delay_ledgers = env
+        .storage()
+        .instance()
+        .get(&DataKey::ExecutionDelayLedgers)
+        .unwrap_or(0u32);
 
     Ok(GovernanceConfig {
         admin,
         min_voting_units,
         identity_required,
         execution_threshold,
+        execution_delay_ledgers,
     })
 }
 
@@ -206,6 +214,7 @@ impl GovernanceContract {
         admin: Address,
         min_voting_units: i128,
         identity_required: bool,
+        execution_delay_ledgers: u32,
     ) -> Result<(), Error> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(Error::AlreadyInitialized);
@@ -216,7 +225,15 @@ impl GovernanceContract {
 
         let mut admins = Vec::new(&env);
         admins.push_back(admin.clone());
-        Self::initialize_with_admins(env, admin, admins, 1, min_voting_units, identity_required)
+        Self::initialize_with_admins(
+            env,
+            admin,
+            admins,
+            1,
+            min_voting_units,
+            identity_required,
+            execution_delay_ledgers,
+        )
     }
 
     pub fn initialize_with_admins(
@@ -226,6 +243,7 @@ impl GovernanceContract {
         execution_threshold: u32,
         min_voting_units: i128,
         identity_required: bool,
+        execution_delay_ledgers: u32,
     ) -> Result<(), Error> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(Error::AlreadyInitialized);
@@ -262,8 +280,9 @@ impl GovernanceContract {
             .set(&DataKey::ExecutionAdmins, &unique_admins);
         env.storage()
             .instance()
-            .set(&DataKey::ExecutionThreshold, &execution_threshold);
-
+            .set(&DataKey::ExecutionThreshold, &execution_threshold);        env.storage()
+            .instance()
+            .set(&DataKey::ExecutionDelayLedgers, &execution_delay_ledgers);
         Ok(())
     }
 
@@ -428,6 +447,15 @@ impl GovernanceContract {
         if !proposal.open || env.ledger().sequence() <= proposal.voting_ends_at {
             return Err(Error::ProposalClosed);
         }
+
+        let config = get_config(&env)?;
+        let execution_ready_at = proposal
+            .voting_ends_at
+            .saturating_add(config.execution_delay_ledgers);
+        if env.ledger().sequence() < execution_ready_at {
+            return Err(Error::ProposalClosed);
+        }
+
         proposal.open = false;
         write_proposal(&env, &proposal);
         Ok(proposal)

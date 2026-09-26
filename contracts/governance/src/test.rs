@@ -18,7 +18,7 @@ fn setup(identity_required: bool) -> (Env, Address, Address, Address, Address) {
     let voter_b = Address::generate(&env);
 
     let client = GovernanceContractClient::new(&env, &contract_id);
-    client.initialize(&admin, &9, &identity_required);
+    client.initialize(&admin, &9, &identity_required, &0);
     (env, contract_id, admin, voter_a, voter_b)
 }
 
@@ -37,7 +37,7 @@ fn setup_multisig() -> (Env, Address, Address, Address, Address) {
     admins.push_back(admin_a.clone());
     admins.push_back(admin_b.clone());
     GovernanceContractClient::new(&env, &contract_id)
-        .initialize_with_admins(&admin_a, &admins, &2, &9, &false);
+        .initialize_with_admins(&admin_a, &admins, &2, &9, &false, &0);
     (env, contract_id, admin_a, admin_b, outsider)
 }
 
@@ -68,6 +68,33 @@ fn execution_requires_distinct_threshold_admin_approvals() {
     approvals.push_back(admin_a);
     approvals.push_back(admin_b);
     assert!(!client.execute_proposal(&proposal.id, &approvals).open);
+}
+
+#[test]
+fn execution_requires_delay_before_approval_can_fire() {
+    let (env, contract_id, admin_a, admin_b, _) = setup_multisig();
+    let client = GovernanceContractClient::new(&env, &contract_id);
+
+    env.ledger().with_mut(|ledger| {
+        ledger.sequence_number = 10;
+    });
+    let proposal = client.create_proposal(
+        &String::from_str(&env, "Delay protected execution"),
+        &String::from_str(&env, "Requires ledger delay before execution"),
+        &11,
+    );
+
+    let mut approvals = Vec::new(&env);
+    approvals.push_back(admin_a);
+    approvals.push_back(admin_b);
+
+    env.ledger().with_mut(|ledger| {
+        ledger.sequence_number = 12;
+    });
+    assert_eq!(
+        client.try_execute_proposal(&proposal.id, &approvals),
+        Err(Ok(Error::ProposalClosed))
+    );
 }
 
 #[test]
